@@ -1,0 +1,145 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+
+\title{Algorytmy Równoległe - Laboratorium 1}
+\author{Adam Staniszewski}
+
+\begin{document}
+
+\maketitle
+
+\section*{Wybór problemu}
+Wyznaczyć temperaturę w przewodniku elektrycznym, który został nagrzany w wyniku przepływu prądu elektrycznego o stałym natężeniu (powierzchnia boczna jest utrzymywana w stałej temperaturze równej zero).
+Zastosować metodę różnicową do równania Poissona:
+
+\[
+\frac{\partial^2 T}{\partial x^2} + \frac{\partial^2 T}{\partial y^2} = -\frac{g}{\lambda}
+\]
+
+gdzie:
+- \( g \) - wydajność źródeł ciepła (stała),
+- \( \lambda \) - przewodność cieplna (stała).
+
+
+\section*{Wyprowadzenie wzoru iteracyjnego}
+Warunki brzegowe - powierzchnia boczna jest utrzymywana w stałej temperaturze równej zero.
+Równanie Poissona dla rozkładu temperatury zapisujemy jako:
+\[
+\frac{\partial^2 T}{\partial x^2} + \frac{\partial^2 T}{\partial y^2} = -\frac{g(x, y)}{\lambda}
+\]
+gdzie:
+\begin{itemize}
+    \item \( T(x, y) \) - funkcja temperatury,
+    \item \( g(x, y) \) - funkcja źródła ciepła,
+    \item \( \lambda \) - przewodność cieplna.
+\end{itemize}
+Przybliżamy drugie pochodne różnicami skończonymi. Dla drugiej pochodnej względem \( x \) mamy:
+\[
+\frac{\partial^2 T}{\partial x^2} \approx \frac{T_{i+1, j} - 2T_{i, j} + T_{i-1, j}}{dx^2}
+\]
+Analogicznie, dla drugiej pochodnej względem \( y \):
+\[
+\frac{\partial^2 T}{\partial y^2} \approx \frac{T_{i, j+1} - 2T_{i, j} + T_{i, j-1}}{dy^2}
+\]
+Sumujemy teraz oba przybliżenia, co daje:
+\[
+\frac{T_{i+1, j} - 2T_{i, j} + T_{i-1, j}}{dx^2} + \frac{T_{i, j+1} - 2T_{i, j} + T_{i, j-1}}{dy^2} = -\frac{g_{i, j}}{\lambda}
+\]
+Zakładając, że siatka jest jednolita, czyli \( dx = dy \), możemy uprościć to wyrażenie do postaci:
+\[
+\frac{T_{i+1, j} + T_{i-1, j} + T_{i, j+1} + T_{i, j-1} - 4T_{i, j}}{dx^2} = -\frac{g_{i, j}}{\lambda}
+\]
+Rozwiązując to równanie względem \( T_{i, j} \), otrzymujemy wzór na nową wartość temperatury:
+\[
+T_{\text{new}}[i][j] = \frac{1}{4} \left( T_{i+1, j} + T_{i-1, j} + T_{i, j+1} + T_{i, j-1} + \frac{g_{i, j} \cdot dx^2}{\lambda} \right)
+\]
+
+\section*{Pseudokod algorytmu sekwencyjnego}
+Algorytm rozwiązuje równanie Poissona metodą różnic skończonych dla siatki 2D, aby wyznaczyć rozkład temperatury \(T\) w przewodniku elektrycznym. 
+
+\begin{algorithm}[H]
+\caption{Algorytm sekwencyjny}
+\begin{algorithmic}[1]
+    \STATE Inicjalizacja:
+    \STATE Definicja parametrów:
+    \STATE \quad $g$ - wydajność źródła ciepła (stała)
+    \STATE \quad $\lambda$ - przewodność cieplna (stała)
+    \STATE \quad $dx, dy$ - odległość między węzłami siatki w kierunkach $x$ i $y$
+    \STATE \quad $\epsilon$ - tolerancja dla kryterium zbieżności
+    \STATE \quad max\_iterations - maksymalna liczba iteracji
+    \STATE \quad $T[x][y]$ - macierz temperatury
+    \STATE Zainicjuj macierz $T[x][y]$ zerami (warunki brzegowe: temperatura = 0)
+    \REPEAT
+    \FOR {każdy punkt wewnętrzny $(i, j)$}
+        \STATE Oblicz nową wartość temperatury:
+        \[
+        T_{\text{new}}[i][j] = \frac{1}{4} (T[i+1][j] + T[i-1][j] + T[i][j+1] + T[i][j-1] + \frac{g \times dx^2}{\lambda})
+        \]
+    \ENDFOR
+    \STATE Sprawdź zbieżność:
+    \IF {różnica $|T_{\text{new}}[i][j] - T[i][j]|$ dla każdego $(i,j)$ jest mniejsza niż $\epsilon$}
+        \STATE Zbieżność osiągnięta, zakończ iterację
+    \ENDIF
+    \STATE Zaktualizuj macierz $T$: $T = T_{\text{new}}$
+    \UNTIL{osiągnięcie zbieżności lub maksymalnej liczby iteracji}
+    \STATE Wyświetl wynikową macierz $T$
+\end{algorithmic}
+\end{algorithm}
+
+\section*{Opis poszczególnych faz PCAM}
+\begin{itemize}
+    \item \textbf{P}artition - w jaki sposób rozdzielić zasoby między procesorami? W tym przypadku możemy podzielić siatkę na mniejsze cześci obsługiwane przez pojedyncze procesory.
+    \item \textbf{C}ommunicate - w jaki sposób procesory wymieniają informacje? Procesory w tym przypadku mogą wymieniać dane brzegowe i wyniki obliczeń.
+    \item \textbf{A}gglomerate - analiza zadań oraz struktury z poprzednich punktów. W razie potrzeby można łączyć zadania w większe, aby zmniejszyć narzut komunikacyjny.
+    \item \textbf{M}apping - przypisanie zadań do poszczególnych procesorów. W naszym przypadku możemy na przykład ustalić, że procesor 0 będzie zbierał wyniki z innych procesorów i sprawdzał czy została osiągnięta zbieżność.
+\end{itemize}
+
+\section*{Psuedokod algorytmu równoległego z wykorzystaniem metodyki PCAM}
+Algorytm równoległy dzieli siatkę na bloki przetwarzane równolegle przez różne procesory z wymianą danych granicznych.
+
+\begin{algorithm}[H]
+\caption{Algorytm równoległy (metoda różnic skończonych z MPI)}
+\begin{algorithmic}[1]
+    \STATE Podziel domenę na $n$ części, gdzie $n$ to liczba procesów.
+    \STATE Każdy proces otrzymuje lokalny blok danych, zawierający:
+    \STATE \quad Obszar obliczeniowy $T_{\text{local}}[x][y]$ oraz dane potrzebne do obliczeń: $g$, $\lambda$, $dx$, $dy$.
+    
+    \STATE Uruchom MPI, zdefiniuj $rank$ (numer procesu) oraz $size$ (liczba procesów)
+    \STATE Każdy proces otrzymuje swój blok danych, w tym:
+    \STATE \quad $g$, $\lambda$, $dx$, $dy$, $T_{\text{local}}[x][y]$
+    
+    \REPEAT
+    \FOR {każdy punkt wewnętrzny $(i, j)$ w lokalnym bloku}
+        \STATE Oblicz nową wartość temperatury:
+        \[
+        T_{\text{new}}[i][j] = \frac{1}{4} (T_{\text{local}}[i+1][j] + T_{\text{local}}[i-1][j] + T_{\text{local}}[i][j+1] + T_{\text{local}}[i][j-1] + \frac{g \times dx^2}{\lambda})
+        \]
+    \ENDFOR
+    
+    \STATE Wymień dane graniczne z sąsiadującymi procesami (zbiorczo, w jednym przesłaniu)
+    
+    \STATE Każdy proces oblicza lokalną różnicę $|T_{\text{new}}[i][j] - T_{\text{local}}[i][j]|$
+
+    \STATE Zbierz różnice na procesie 0 (root) za pomocą $MPI\_Reduce$
+    
+    \IF {globalna różnica jest mniejsza niż $\epsilon$ (na procesie 0)}
+    \STATE Zbieżność osiągnięta, zakończ iterację
+    \ENDIF
+    \STATE Zaktualizuj macierz $T$: $T_{\text{local}} = T_{\text{new}}$
+    \UNTIL{osiągnięcie zbieżności lub maksymalnej liczby iteracji}
+    
+    \STATE Proces 0 zbiera wyniki z wszystkich procesów za pomocą $MPI\_Gather$
+
+    \STATE Wyświetl wynikową macierz $T$ (na procesie 0)
+    
+\end{algorithmic}
+\end{algorithm}
+
+\end{document}
