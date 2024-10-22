@@ -40,7 +40,7 @@ int main() {
             for (int i = 1; i < Nx - 1; i++) {
                 T[j][i] = (T_old[j + 1][i] + T_old[j - 1][i] + 
                            T_old[j][i + 1] + T_old[j][i - 1] - 
-                           (g / lambda_) * dx * dx) / 4.0;
+                           (g / lambda_) * (dx * dx + dy * dy)) / 4.0;
             }
         }
 
