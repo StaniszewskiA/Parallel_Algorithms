@@ -1,3 +1,4 @@
+import time
 from mpi4py import MPI
 import numpy as np
 import math
@@ -46,6 +47,13 @@ def parallel_sieve(n):
         return None
 
 if __name__ == "__main__":
-    limit: int = 100000
+    limit: int = 999999999
+
+    start_time = time.time()
+
     result = parallel_sieve(limit)
-    print(result)
+
+    end_time = time.time()
+
+    print(len(result))
+    print(f"Elapsed time {end_time - start_time:.2f}")

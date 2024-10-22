@@ -1,0 +1,102 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[table]{xcolor}
+\usepackage{diagbox}
+\usepackage{geometry}
+
+\title{Algorytmy Równoległe - Laboratorium 2}
+\author{Adam Staniszewski}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section*{Sito Eratostenesa}
+Przygotojmy sito i sprawdźmy jakie wyniki osiągnie w wersji sekwencyjnej.
+
+\begin{lstlisting}
+def sieve_of_erathosthenes(limit: int) -> list[int]:
+    sieve: list[bool] = np.ones(limit + 1, dtype=bool)
+    sieve[0] = False
+    sieve[1] = False
+
+    for num in range(2, int(math.sqrt(limit)) + 1):
+        if sieve[num]:
+            sieve[num*num:limit+1:num] = False
+
+    return np.nonzero(sieve)[0]
+\end{lstlisting}
+Znalezienie liczb pierwszych do 999999999 zajęło 9.84 sekund. Znaleźliśmy 50847534 liczb.
+
+\section*{Zrównoleglenie sita}
+Implementacja sita z poprzedniego zadania pozostanie bez zmiany, ale tym razem będzie ono wywoływane nie wprost, ale przez funkcję \textbf{parallel\_sieve}.
+
+\begin{lstlisting}
+def parallel_sieve(n):
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    sqrt_n: int = int(math.sqrt(n))
+
+    # Punkt 1
+    primes_in_B: list[int] = sieve_of_erathosthenes(sqrt_n)
+
+    # Punkt 2
+    start_C: int = sqrt_n + 1 + rank * (n - sqrt_n) // size
+    end_C: int = sqrt_n + 1 + (rank + 1) * (n - sqrt_n) // size - 1
+
+    # Punkt 3
+    sieve: list[bool] = np.ones(end_C - start_C + 1, dtype=bool)
+
+    for prime in primes_in_B:
+        first_multiple = max(prime*prime, (start_C + prime - 1) // prime*prime)
+        sieve[first_multiple - start_C:end_C - start_C + 1:prime] = False
+
+    local_primes = np.nonzero(sieve)[0] + start_C
+
+    # Punkt 4
+    all_primes = comm.gather(local_primes, root = 0)
+
+    if rank == 0:
+        all_primes = np.concatenate([primes_in_B] + all_primes)
+        return all_primes
+    else:
+        return None
+ 
+\end{lstlisting}
+Połączmy się z Aresem i uruchommy nasz algorytm równoległy na 1 węźle obliczeniowym z 4 rdzeniami (analogicznie do konfiguracji z pliku Quickstart). 
+
+Algorytm równoległy znalazł liczby pierwsze do 999999999 w 4.97 sekundy. Podobnie do implementacji sekwencyjnej, znalazł ich 50847534. Widzimy więc, że przedział został poprawnie podzielony między procesy i nie zgubiliśmy żadnych wartości.
+
+\section*{Eksperymenty}
+Sprawdźmy jeszcze jak będzie zmieniał się czas działania algorytmu przy wzroście liczby rdzeni. Dla każdego wariantu uruchomimy algorytm 5 razy i wyciągniemy średni czas.
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+\rowcolor{orange!40} 
+Liczba rdzeni & Średni czas wykonywania algorytm  \\\hline
+1 (implementacja sekwencyjna) & 9.63 sekund \\\hline
+4 rdzenie &  4.87 sekund \\\hline
+8 rdzeni &  3.89 sekundy \\\hline
+16 rdzeni &  2.82 sekundy \\\hline
+
+\end{tabular}
+\caption{\label{tab:widgets}Średni czas obliczeń dla różnej ilości rdzeni.}
+\end{table}
+
+\section*{Wnioski}
+Możemy zaobserwować, że zrównoleglenie i dostosowanie ilości rdzeni w weźle obliczeniowym może znacznie przyszpieszyć szukanie liczb pierwszych przy pomocy Sita Eratostenesa.
+
+\end{document}
