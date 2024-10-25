@@ -1,6 +1,6 @@
 import mpi4py
 import numpy as np
-
+import matplotlib.pyplot as plt
 from mpi4py import MPI
 
 def main():
@@ -23,12 +23,9 @@ def main():
 
     if rank < extra_rows:
         local_rows = rows_per_process + 1
-        start_row = rank * local_rows
     else:
         local_rows = rows_per_process
-        start_row = rank * local_rows + extra_rows
 
-    end_row = start_row + local_rows
 
     T_local = np.zeros((local_rows, Nx))
 
@@ -40,7 +37,6 @@ def main():
 
     while error > tolerance:
         T_old = T_local.copy()
-
 
         for j in range(1, local_rows - 1):
             for i in range(1, Nx - 1):
@@ -57,16 +53,25 @@ def main():
             comm.Recv(T_local[-1, :], source=rank + 1, tag=0)
 
         error = np.max(np.abs(T_local - T_old))
-
+        error = comm.allreduce(error, op=MPI.MAX) 
     T_global = None
-
     if rank == 0:
-        T_global == np.empty((Ny, Nx))
+        T_global = np.empty((Ny, Nx))
 
     comm.Gather(T_local, T_global, root=0)
 
     if rank == 0:
-        print(T_global)
+        return T_global
+    return None
 
-if __name__ == "__name__":
-    main()
+if __name__ == "__main__":
+    T_global = main()
+    if T_global is not None:
+        plt.imshow(T_global, cmap='hot', origin='lower', extent=[0, 10, 0, 10])
+        plt.colorbar(label="Temperature")
+        plt.title("2D Heat Distribution")
+        plt.xlabel("X")
+        plt.ylabel("Y")
+        plt.show()
+        plt.savefig("heatmap.png")
+

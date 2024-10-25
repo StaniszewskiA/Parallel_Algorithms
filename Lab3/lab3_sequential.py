@@ -1,4 +1,5 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 def main():
     Lx: float = 10.0
@@ -33,7 +34,12 @@ def main():
                 
         error: float = np.max(np.abs(T - T_old))
 
-    print(T)
+    plt.imshow(T, cmap='hot', origin='lower', extent=[0, Lx, 0, Ly])
+    plt.colorbar(label="Temperature")
+    plt.title("2D Heat Distribution")
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.show()
 
 if __name__ == "__main__":
     main()
