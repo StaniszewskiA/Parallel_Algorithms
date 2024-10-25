@@ -1,0 +1,205 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+\usepackage{listings}
+
+\title{Algorytmy Równoległe - Laboratorium 3}
+\author{Adam Staniszewski}
+
+\lstset{frame=tb,
+  language=Python,
+  aboveskip=3mm,
+  belowskip=3mm,
+  showstringspaces=false,
+  columns=flexible,
+  basicstyle={\small\ttfamily},
+  numbers=none,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue},
+  commentstyle=\color{dkgreen},
+  stringstyle=\color{green},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=3
+}
+
+\begin{document}
+
+\maketitle
+\textbf{Na początku przypomimnijmy co udało się ustalić w ramach laboratorium 1.}
+
+\section*{Wybór problemu}
+
+Wyznaczyć temperaturę w przewodniku elektrycznym, który został nagrzany w wyniku przepływu prądu elektrycznego o stałym natężeniu (powierzchnia boczna jest utrzymywana w stałej temperaturze równej zero).
+Zastosować metodę różnicową do równania Poissona:
+
+\[
+\frac{\partial^2 T}{\partial x^2} + \frac{\partial^2 T}{\partial y^2} = -\frac{g}{\lambda}
+\]
+
+gdzie:
+- \( g \) - wydajność źródeł ciepła (stała),
+- \( \lambda \) - przewodność cieplna (stała).
+
+
+\section*{Wyprowadzenie wzoru iteracyjnego}
+Warunki brzegowe - powierzchnia boczna jest utrzymywana w stałej temperaturze równej zero.
+Równanie Poissona dla rozkładu temperatury zapisujemy jako:
+\[
+\frac{\partial^2 T}{\partial x^2} + \frac{\partial^2 T}{\partial y^2} = -\frac{g(x, y)}{\lambda}
+\]
+gdzie:
+\begin{itemize}
+    \item \( T(x, y) \) - funkcja temperatury,
+    \item \( g(x, y) \) - funkcja źródła ciepła,
+    \item \( \lambda \) - przewodność cieplna.
+\end{itemize}
+Przybliżamy drugie pochodne różnicami skończonymi. Dla drugiej pochodnej względem \( x \) mamy:
+\[
+\frac{\partial^2 T}{\partial x^2} \approx \frac{T_{i+1, j} - 2T_{i, j} + T_{i-1, j}}{dx^2}
+\]
+Analogicznie, dla drugiej pochodnej względem \( y \):
+\[
+\frac{\partial^2 T}{\partial y^2} \approx \frac{T_{i, j+1} - 2T_{i, j} + T_{i, j-1}}{dy^2}
+\]
+Sumujemy teraz oba przybliżenia, co daje:
+\[
+\frac{T_{i+1, j} - 2T_{i, j} + T_{i-1, j}}{dx^2} + \frac{T_{i, j+1} - 2T_{i, j} + T_{i, j-1}}{dy^2} = -\frac{g_{i, j}}{\lambda}
+\]
+Zakładając, że siatka jest jednolita, czyli \( dx = dy \), możemy uprościć to wyrażenie do postaci:
+\[
+\frac{T_{i+1, j} + T_{i-1, j} + T_{i, j+1} + T_{i, j-1} - 4T_{i, j}}{dx^2} = -\frac{g_{i, j}}{\lambda}
+\]
+Rozwiązując to równanie względem \( T_{i, j} \), otrzymujemy wzór na nową wartość temperatury:
+\[
+T_{\text{new}}[i][j] = \frac{1}{4} \left( T_{i+1, j} + T_{i-1, j} + T_{i, j+1} + T_{i, j-1} + \frac{g_{i, j} \cdot dx^2}{\lambda} \right)
+\]
+
+\section*{Psuedokod algorytmu równoległego z wykorzystaniem metodyki PCAM}
+Algorytm równoległy dzieli siatkę na bloki przetwarzane równolegle przez różne procesory z wymianą danych granicznych.
+
+\begin{algorithm}[H]
+\caption{Algorytm równoległy (metoda różnic skończonych z MPI)}
+\begin{algorithmic}[1]
+    \STATE Podziel domenę na $n$ części, gdzie $n$ to liczba procesów.
+    \STATE Każdy proces otrzymuje lokalny blok danych, zawierający:
+    \STATE \quad Obszar obliczeniowy $T_{\text{local}}[x][y]$ oraz dane potrzebne do obliczeń: $g$, $\lambda$, $dx$, $dy$.
+    
+    \STATE Uruchom MPI, zdefiniuj $rank$ (numer procesu) oraz $size$ (liczba procesów)
+    \STATE Każdy proces otrzymuje swój blok danych, w tym:
+    \STATE \quad $g$, $\lambda$, $dx$, $dy$, $T_{\text{local}}[x][y]$
+    
+    \REPEAT
+    \FOR {każdy punkt wewnętrzny $(i, j)$ w lokalnym bloku}
+        \STATE Oblicz nową wartość temperatury:
+        \[
+        T_{\text{new}}[i][j] = \frac{1}{4} (T_{\text{local}}[i+1][j] + T_{\text{local}}[i-1][j] + T_{\text{local}}[i][j+1] + T_{\text{local}}[i][j-1] + \frac{g \times dx^2}{\lambda})
+        \]
+    \ENDFOR
+    
+    \STATE Wymień dane graniczne z sąsiadującymi procesami (zbiorczo, w jednym przesłaniu)
+    
+    \STATE Każdy proces oblicza lokalną różnicę $|T_{\text{new}}[i][j] - T_{\text{local}}[i][j]|$
+
+    \STATE Zbierz różnice na procesie 0 (root) za pomocą $MPI\_Reduce$
+    
+    \IF {globalna różnica jest mniejsza niż $\epsilon$ (na procesie 0)}
+    \STATE Zbieżność osiągnięta, zakończ iterację
+    \ENDIF
+    \STATE Zaktualizuj macierz $T$: $T_{\text{local}} = T_{\text{new}}$
+    \UNTIL{osiągnięcie zbieżności lub maksymalnej liczby iteracji}
+    
+    \STATE Proces 0 zbiera wyniki z wszystkich procesów za pomocą $MPI\_Gather$
+
+    \STATE Wyświetl wynikową macierz $T$ (na procesie 0)
+    
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{Przejdźmy teraz do treści laboratorium 3}
+\section*{Implementacja algorytmu w języku Python}
+\begin{lstlisting}
+import mpi4py
+import numpy as np
+import matplotlib.pyplot as plt
+from mpi4py import MPI
+
+def main():
+    Lx: float = 10.0
+    Ly: float = 10.0
+    Nx: int = 20
+    Ny: int = 20
+    g: float = 1.0
+    lambda_: float = 1.0
+
+    dx = Lx / (Nx - 1)
+    dy = Ly / (Ny - 1)
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    rows_per_process = Ny // size
+    extra_rows = Ny % size
+
+    if rank < extra_rows:
+        local_rows = rows_per_process + 1
+    else:
+        local_rows = rows_per_process
+
+
+    T_local = np.zeros((local_rows, Nx))
+
+    T_local[0, :] = 0
+    T_local[-1, :] = 0
+
+    tolerance: float = 1e-6
+    error: float = 1.0
+
+    while error > tolerance:
+        T_old = T_local.copy()
+
+        for j in range(1, local_rows - 1):
+            for i in range(1, Nx - 1):
+                T_local[j, i] = (T_old[j + 1, i] + T_old[j - 1, i] + 
+                                T_old[j, i + 1] + T_old[j, i - 1] - 
+                                (g / lambda_) * (dx ** 2 + dy ** 2)) / 4.0
+                
+        if rank > 0: 
+            comm.Send(T_local[1, :], dest=rank - 1, tag=0)  
+            comm.Recv(T_local[0, :], source=rank - 1, tag=1)  
+
+        if rank < size - 1:  
+            comm.Send(T_local[-2, :], dest=rank + 1, tag=1)  
+            comm.Recv(T_local[-1, :], source=rank + 1, tag=0)
+
+        error = np.max(np.abs(T_local - T_old))
+        error = comm.allreduce(error, op=MPI.MAX) 
+    T_global = None
+    if rank == 0:
+        T_global = np.empty((Ny, Nx))
+
+    comm.Gather(T_local, T_global, root=0)
+
+    if rank == 0:
+        return T_global
+    return None
+
+\end{lstlisting}
+
+\section*{Wyniki}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{obraz.png}
+    \caption{Wynikowo heatmapa}
+    \label{fig:enter-label}
+\end{figure}
+
+\end{document}
