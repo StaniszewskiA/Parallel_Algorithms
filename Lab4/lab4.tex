@@ -1,0 +1,99 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[table]{xcolor}
+\usepackage{diagbox}
+\usepackage{geometry}
+
+\title{Algorytmy Równoległe - Laboratorium 4}
+\author{Adam Staniszewski}
+
+\begin{document}
+
+\maketitle
+
+\section*{Przygotowanie danych}
+Wykonajmy pomiary czasu wykonania algorytmu dla implementacji sekwencyjnej (czyli dla jednego rdzenia) i równoległej (dwa i cztery rdzenie). Wykorzystamy uśredniony czas wykonania z pięciu prób, Rozważymy też różne rozmiary problemów.
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+\rowcolor{orange!40} 
+Liczba rdzeni & Średni czas wykonania algorytmu (s) \\\hline
+1 (implementacja sekwencyjna) & 0.018625 \\\hline
+2 & 0.032318 \\\hline
+4 &  0.026899 \\\hline
+
+\end{tabular}
+\caption{\label{tab:widgets}Średni czas obliczeń dla problemu o rozmiarze 10 na 10.}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+\rowcolor{orange!40} 
+Liczba rdzeni & Średni czas wykonania algorytmu (s)\\\hline
+1 (implementacja sekwencyjna) & 14.41022 \\\hline
+2 & 8.472051 \\\hline
+4 & 3.904285 \\\hline
+
+\end{tabular}
+\caption{\label{tab:widgets}Średni czas obliczeń dla problemu o rozmiarze 50 na 50.}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+\rowcolor{orange!40} 
+Liczba rdzeni & Średni czas wykonania algorytmu (s)\\\hline
+1 (implementacja sekwencyjna) & 207.95182 \\\hline
+2 & 115.18612 \\\hline
+4 & 52.76849 \\\hline
+
+\end{tabular}
+\caption{\label{tab:widgets}Średni czas obliczeń dla problemu o rozmiarze 100 na 100.}
+\end{table}
+
+\section*{Wykresy}
+\subsection*{Przypieszenie}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{speedup.png}
+    \caption{Wartości przyspieszenia dla różnych rozmiarów problemu i różnej liczby rdzeni}
+    \label{fig:enter-label}
+\end{figure}
+
+\subsection*{Efektywność}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{effectivness.png}
+    \caption{Wartości efektywności dla różnych rozmiarów problemu i różnej liczby rdzeni}
+    \label{fig:enter-label}
+\end{figure}
+
+\subsection*{Metryka Karpa-Flatta}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{karp-flatt.png}
+    \caption{Wartości metryki Karpa-Flatta dla różnych rozmiarów problemu i różnej liczby rdzeni}
+    \label{fig:enter-label}
+\end{figure}
+
+\subsection*{Wnioski}
+Możemy zauważyć, że dla małych problemów (rozmiaru 10x10) wartości przyspieszenia i efektywności spadają wraz z liczbą rdzeni. Możemy zatem wywnioskować, że dla dostatecznie małych problemów czas wykonania algorytmu jest zdominowany przez czas komunikacji między procesami. Ujemne wartości metryki Karpa-Flatta dla problemu o rozmiarze 10x10 potwierdzają powyższe przypuszczenie.
+
+Dla większych problemów możemy zauważyć, że wszystkie metryki są rosnące. Dodatnie wartości metryki Karpa-Flatta wskazują, że zrównoleglenie algorytmu jest korzystne dla większych problemów.
+
+\end{document}

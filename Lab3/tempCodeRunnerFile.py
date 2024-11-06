@@ -1,0 +1,6 @@
+    plt.imshow(T, cmap='hot', origin='lower', extent=[0, Lx, 0, Ly])
+    plt.colorbar(label="Temperature")
+    plt.title("2D Heat Distribution")
+    plt.xlabel("X")
+    plt.ylabel("Y")
+    plt.show()

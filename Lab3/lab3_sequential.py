@@ -1,11 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import time
 
 def main():
     Lx: float = 10.0
     Ly: float = 10.0
-    Nx: int = 20
-    Ny: int = 20
+    Nx: int = 100
+    Ny: int = 100
     g: float = 1.0
     lambda_: float = 1.0
 
@@ -42,4 +43,8 @@ def main():
     plt.show()
 
 if __name__ == "__main__":
+    start = time.time()
     main()
+    end = time.time()
+
+    print(f"{(end-start):.7}")
