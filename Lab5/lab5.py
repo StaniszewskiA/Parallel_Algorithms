@@ -10,6 +10,7 @@ def main():
     Ny: int = 64
     g: float = 1.0
     lambda_: float = 1.0
+    omega: float = 1.8 
 
     dx = Lx / (Nx - 1)
     dy = Ly / (Ny - 1)
@@ -18,64 +19,50 @@ def main():
     rank = comm.Get_rank()
     size = comm.Get_size()
 
-    # Determine local rows for each process
     rows_per_process = Ny // size
     extra_rows = Ny % size
     local_rows = rows_per_process + 1 if rank < extra_rows else rows_per_process
 
-    # Initialize the local temperature array
-    T_local = np.empty((local_rows, Nx), dtype=np.float64)
-    T_local[0, :] = 0
-    T_local[-1, :] = 0
+    T_local = np.zeros((local_rows + 2, Nx)) 
+    T_local[0, :] = 0 
+    T_local[-1, :] = 0  
 
     tolerance: float = 1e-6
     error: float = 1.0
 
     while error > tolerance:
-        T_old = T_local.copy()
+        error_local = 0.0
 
-        # Update temperature (skip boundary rows)
-        for j in range(1, local_rows - 1):
+        for j in range(1, local_rows + 1):
             for i in range(1, Nx - 1):
-                T_local[j, i] = (T_old[j + 1, i] + T_old[j - 1, i] +
-                                 T_old[j, i + 1] + T_old[j, i - 1] -
-                                 (g / lambda_) * (dx ** 2 + dy ** 2)) / 4.0
+                T_new = (T_local[j + 1, i] + T_local[j - 1, i] +
+                         T_local[j, i + 1] + T_local[j, i - 1] - 
+                         (g / lambda_) * (dx ** 2 + dy ** 2)) / 4.0
+                T_local[j, i] = (1 - omega) * T_local[j, i] + omega * T_new
+                error_local = max(error_local, abs(T_local[j, i] - T_new))
 
-        # Communicate boundary rows with neighbors
-        if local_rows > 1:
-            if rank > 0:
-                comm.Sendrecv(T_local[1, :], dest=rank - 1, sendtag=0,
-                              recvbuf=T_local[0, :], source=rank - 1, recvtag=1)
-            if rank < size - 1:
-                comm.Sendrecv(T_local[-2, :], dest=rank + 1, sendtag=1,
-                              recvbuf=T_local[-1, :], source=rank + 1, recvtag=0)
+        reqs = []
+        if rank > 0:
+            reqs.append(comm.Irecv(T_local[0, :], source=rank - 1, tag=0))
+            reqs.append(comm.Isend(T_local[1, :], dest=rank - 1, tag=1))
+        if rank < size - 1:
+            reqs.append(comm.Irecv(T_local[-1, :], source=rank + 1, tag=1))
+            reqs.append(comm.Isend(T_local[-2, :], dest=rank + 1, tag=0))
 
-        # Calculate the maximum error across all processes
-        local_error = np.max(np.abs(T_local - T_old))
-        error = comm.allreduce(local_error, op=MPI.MAX)
+        MPI.Request.Waitall(reqs)
 
-    # Flatten local temperature data for gathering
-    T_local_flat = T_local.flatten()
+        error = comm.allreduce(error_local, op=MPI.MAX)
 
-    # Initialize counts and displacements
-    counts = np.zeros(size, dtype=int)
-    displacements = np.zeros(size, dtype=int)
-
-    # Gather the size of the local arrays from each rank
-    comm.Gather(len(T_local_flat), counts, root=0)
+    T_local_flat = T_local[1:-1, :].flatten() 
+    counts = np.array(comm.gather(len(T_local_flat), root=0))
 
     if rank == 0:
-        # Compute the displacements for each rank
-        displacements[1:] = np.cumsum(counts[:-1])
+        T_global_flat = np.empty(sum(counts), dtype=T_local.dtype)
+    else:
+        T_global_flat = None
 
-    T_global_flat = None
-    if rank == 0:
-        T_global_flat = np.empty(np.sum(counts), dtype=T_local.dtype)
+    comm.Gatherv(T_local_flat, (T_global_flat, counts), root=0)
 
-    # Perform the gather operation
-    comm.Gatherv(sendbuf=T_local_flat, recvbuf=(T_global_flat, counts, displacements), root=0)
-
-    # Reshape and reconstruct global temperature grid on root
     if rank == 0:
         T_global = np.zeros((Ny, Nx))
         row_offset = 0
@@ -90,8 +77,5 @@ def main():
 if __name__ == "__main__":
     start = time.time()
     T_global = main()
-    MPI.COMM_WORLD.Barrier()  # Synchronize all processes before timing ends
     end = time.time()
-
-    if MPI.COMM_WORLD.Get_rank() == 0:
-        print(f"Execution Time: {(end - start):.7} seconds")
+    print(f"Execution Time: {(end - start):.7f} seconds")

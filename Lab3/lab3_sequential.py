@@ -5,8 +5,8 @@ import time
 def main():
     Lx: float = 10.0
     Ly: float = 10.0
-    Nx: int = 100
-    Ny: int = 100
+    Nx: int = 256
+    Ny: int = 256
     g: float = 1.0
     lambda_: float = 1.0
 
@@ -35,12 +35,12 @@ def main():
                 
         error: float = np.max(np.abs(T - T_old))
 
-    plt.imshow(T, cmap='hot', origin='lower', extent=[0, Lx, 0, Ly])
-    plt.colorbar(label="Temperature")
-    plt.title("2D Heat Distribution")
-    plt.xlabel("X")
-    plt.ylabel("Y")
-    plt.show()
+    # plt.imshow(T, cmap='hot', origin='lower', extent=[0, Lx, 0, Ly])
+    # plt.colorbar(label="Temperature")
+    # plt.title("2D Heat Distribution")
+    # plt.xlabel("X")
+    # plt.ylabel("Y")
+    # plt.show()
 
 if __name__ == "__main__":
     start = time.time()

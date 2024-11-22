@@ -1,0 +1,320 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[table]{xcolor}
+\usepackage{diagbox}
+\usepackage{geometry}
+
+\title{Algorytmy Równoległe - Laboratorium 5}
+\author{Adam Staniszewski}
+
+\lstset{
+    language=bash,
+    basicstyle=\ttfamily,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{orange},
+    backgroundcolor=\color{lightgray!20},
+    frame=single,
+    captionpos=b
+}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+\section{Instalacja narzędzia}
+Do analizy użyjemy narzędzia \textbf{VTune}, które załadujemy na Aresie przy pomocy komendy:
+
+\begin{lstlisting}
+module load vtune
+\end{lstlisting}
+
+\section{Testy narzędzia}
+W ramach testów uruchomimy algorytm na czterech rdzeniach przy użyciu narzędzia \textbf{VTune}. Algorytm będzie rozwiązywał problem o rozmiarze \textbf{16 na 16}.
+Skrypt uruchamiamy następująco:
+\begin{lstlisting}
+vtune -collect hotspots -duration 30 -result-dir vtune_results 
+python lab3.py
+\end{lstlisting}
+\vfill
+Po wywołaniu komedy, VTune wyświetli w terminalu:
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{vtune_result1.png}
+    \caption{VTune w terminalu}
+    \label{fig:enter-label}
+\end{figure}
+Możemy zauważyć bardzo niską \textbf{efektywność wykorzystania CPU}. Prawdopodobnie jest to związane z:
+\begin{itemize}
+    \item niewielkim rozmiarem problemu,
+    \item oczekiwaniami VTune'a odnośnie ilości CPU - widzimy, że oprogramowanie oczekuje użycia 48 procesorów,
+\end{itemize}
+Zasadne wydaje się zatem znaczne zwiększenie rozmiaru problemu i ilości rdzeni w ramach dalszych eksperymentów.
+\noindent
+W tym laboratorium mużyjemy \textbf{metody Gaussa-Seidla} do rozwiązania zadania.
+
+\section{Analiza wydajności algorytmu dla różnych rozmiarów problemów}
+Rozszerzmy wyżej wspomniane eksperymenty o inne wielkości problemów i dodatkowe rdzenie. Poprawmy także zawarty w nich błąd - rozmiary problemów powinny być kolejnymi \textbf{potęgami dwójki} większymi od 2.
+
+\subsection{Nowy algorytm}
+\begin{lstlisting}
+import time
+import numpy as np
+import matplotlib.pyplot as plt
+from mpi4py import MPI
+
+def main():
+    Lx: float = 10.0
+    Ly: float = 10.0
+    Nx: int = 64
+    Ny: int = 64
+    g: float = 1.0
+    lambda_: float = 1.0
+    omega: float = 1.8 
+
+    dx = Lx / (Nx - 1)
+    dy = Ly / (Ny - 1)
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    rows_per_process = Ny // size
+    extra_rows = Ny % size
+    local_rows = rows_per_process + 1 if rank < extra_rows else rows_per_process
+
+    T_local = np.zeros((local_rows + 2, Nx)) 
+    T_local[0, :] = 0 
+    T_local[-1, :] = 0  
+
+    tolerance: float = 1e-6
+    error: float = 1.0
+
+    while error > tolerance:
+        error_local = 0.0
+
+        for j in range(1, local_rows + 1):
+            for i in range(1, Nx - 1):
+                T_new = (T_local[j + 1, i] + T_local[j - 1, i] +
+                         T_local[j, i + 1] + T_local[j, i - 1] - 
+                         (g / lambda_) * (dx ** 2 + dy ** 2)) / 4.0
+                T_local[j, i] = (1 - omega) * T_local[j, i] + omega * T_new
+                error_local = max(error_local, abs(T_local[j, i] - T_new))
+
+        reqs = []
+        if rank > 0:
+            reqs.append(comm.Irecv(T_local[0, :], source=rank - 1, tag=0))
+            reqs.append(comm.Isend(T_local[1, :], dest=rank - 1, tag=1))
+        if rank < size - 1:
+            reqs.append(comm.Irecv(T_local[-1, :], source=rank + 1, tag=1))
+            reqs.append(comm.Isend(T_local[-2, :], dest=rank + 1, tag=0))
+
+        MPI.Request.Waitall(reqs)
+
+        error = comm.allreduce(error_local, op=MPI.MAX)
+
+    T_local_flat = T_local[1:-1, :].flatten() 
+    counts = np.array(comm.gather(len(T_local_flat), root=0))
+
+    if rank == 0:
+        T_global_flat = np.empty(sum(counts), dtype=T_local.dtype)
+    else:
+        T_global_flat = None
+
+    comm.Gatherv(T_local_flat, (T_global_flat, counts), root=0)
+
+    if rank == 0:
+        T_global = np.zeros((Ny, Nx))
+        row_offset = 0
+        for i in range(size):
+            local_rows_i = rows_per_process + 1 if i < extra_rows 
+            else rows_per_process
+            T_global[row_offset:row_offset + local_rows_i, :] = \
+                T_global_flat[row_offset * Nx:(row_offset
+                + local_rows_i) * Nx].reshape(local_rows_i, Nx)
+            row_offset += local_rows_i
+        return T_global
+    return None
+
+if __name__ == "__main__":
+    start = time.time()
+    T_global = main()
+    end = time.time()
+    print(f"Execution Time: {(end - start):.7f} seconds")
+\end{lstlisting}
+
+\subsection{Rozmiar 32 na 32}
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+\rowcolor{orange!40} 
+Liczba rdzeni & Średni czas wykonania algorytmu (s) \\\hline
+1 (implementacja sekwencyjna) & 2.91 \\\hline
+2 & 1.49 \\\hline
+4 & 0.28 \\\hline
+8 & 0.26 \\\hline
+16 & 0.22 \\\hline
+32 & 0.23 \\\hline
+48 & 0.24 \\\hline
+
+\end{tabular}
+\caption{\label{tab:widgets}Średni czas obliczeń dla problemu o rozmiarze 32 na 32.}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{32_32_4.png}
+    \caption{Rozmiar 32 na 32, 4 procesory.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{32_32_8.png}
+    \caption{Rozmiar 32 na 32, 8 procesorów.}
+    \label{Rozmiar 32 na 32, 8 procesorów.}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{32_32_16.png}
+    \caption{Rozmiar 32 na 32, 16 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{32_32_32.png}
+    \caption{Rozmiar 32 na 32, 32 procesory.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{32_32_48.png}
+    \caption{Rozmiar 32 na 32, 48 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\subsection{Rozmiar 64 na 64}
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+\rowcolor{orange!40} 
+Liczba rdzeni & Średni czas wykonania algorytmu (s) \\\hline
+1 (implementacja sekwencyjna) & 38.14 \\\hline
+2 & 22.01 \\\hline
+4 & 4.97 \\\hline
+8 & 4.56 \\\hline
+16 & 4.31 \\\hline
+32 & 4.78 \\\hline
+48 & 45.16 \\\hline
+
+\end{tabular}
+\caption{\label{tab:widgets}Średni czas obliczeń dla problemu o rozmiarze 64 na 64.}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{63_64_4.png}
+    \caption{Rozmiar 64 na 64, 4 procesory.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{64_64_8.png}
+    \caption{Rozmiar 64 na 64, 8 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{64_64_16.png}
+    \caption{Rozmiar 64 na 64, 16 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{64_64_32.png}
+    \caption{Rozmiar 64 na 64, 32 procesory.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{64_64_48.png}
+    \caption{Rozmiar 64 na 64, 48 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\newpage
+
+\subsection{Rozmiar 128 na 128}
+\begin{table}[ht]
+\centering
+\begin{tabular}{|l|r|r|r|}
+\hline
+\rowcolor{orange!40} 
+Liczba rdzeni & Średni czas wykonania algorytmu (s) \\\hline
+1 (implementacja sekwencyjna) & 570.46 \\\hline
+2 & 297.40 \\\hline
+4 & 68.19 \\\hline
+8 & 64.31 \\\hline
+16 & 66.75 \\\hline
+32 & 68.15 \\\hline
+48 & 67.98 \\\hline
+\end{tabular}
+\caption{\label{tab:widgets}Średni czas obliczeń dla problemu o rozmiarze 128 na 128.}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{128_128_4.png}
+    \caption{Rozmiar 128 na 128, 4 procesory.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{128_128_8.png}
+    \caption{Rozmiar 128 na 128, 8 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{128_128_16.png}
+    \caption{Rozmiar 128 na 128, 16 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{128_128_32.png}
+    \caption{Rozmiar 128 na 128, 32 procesory.}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{128_128_48.png}
+    \caption{Rozmiar 128 na 128, 48 procesorów.}
+    \label{fig:enter-label}
+\end{figure}
+
+\section{Wnioski}
+Ze względu na ograniczenia dostępu do większych ilości procesorów, udało się rozwiążać jedynie relatywnie małe problemy. Efektywności użycia CPU jest niska, ale widzimy, że wzrasta razem ze zwiększaniem rozmiaru problemu.
+
+\end{document}
