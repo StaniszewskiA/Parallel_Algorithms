@@ -49,7 +49,7 @@ void sieve_of_eratosthenes(int limit, int **primes, int *prime_count) {
 }
 
 int main() {
-    int limit = 999999999;  
+    int limit = 99999;  
     double total_time = 0;   
 
     clock_t start_time = clock();  

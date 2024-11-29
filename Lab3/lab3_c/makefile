@@ -2,9 +2,9 @@ CC = gcc
 
 CFLAGS = -Wall -Wextra -O2 -g
 
-SRCS = lab1_sequential.c
+SRCS = lab3_sequential.c
 
-TARGET = lab1_sequential
+TARGET = lab3_sequential
 
 all: $(TARGET)
 
