@@ -1,0 +1,465 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[table]{xcolor}
+\usepackage{diagbox}
+\usepackage{geometry}
+
+\title{Algorytmy Równoległe - Laboratorium 6}
+\author{Adam Staniszewski}
+
+\lstset{
+    language=python,
+    basicstyle=\ttfamily,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{orange},
+    backgroundcolor=\color{lightgray!20},
+    frame=single,
+    captionpos=b
+}
+
+\begin{document}
+
+\setlength{\parindent}{0pt}
+
+\maketitle
+
+\section{Zasada działania algorytmów typu branch and bound}
+\textbf{Branch and bound} to metoda rozwiązywania problemów kombinatorycznych, która opiera się na przeszukiwawniu przestrzeni rozwiązań przy eliminacji części przestrzeni, które nie mogą zawierać lepszego rozwiązania.
+
+\vspace{1em}
+Kluczowe elementy algorytmu:
+\begin{itemize}
+    \item \textbf{Drzewo przeszukiwań}
+    \begin{itemize}
+        \item Każdy węzeł drzewa reprezentuje częściowe rozwiązanie (podzbiór miast, które komiwojażer odwiedził, oraz aktualny koszt podróży),
+        \item Korzeń drzewa odpowiada sytuacji początkowej (bez odwiedzonych miast, z wyjątkiem miasta startowego).
+    \end{itemize}
+    \item \textbf{Branch}
+    \begin{itemize}
+        \item Z każdego węzła generowane są nowe węzły, które reprezentują kolejne możliwe decyzje (odwiedzenie następnych miast),
+        \item Dla każdego nowego węzła aktualizowany jest koszt trasy.
+    \end{itemize}
+    \item \textbf{Bound}
+    \begin{itemize}
+        \item Algorytm oblicza dolne ograniczenie kosztu dla każdej gałęzi,
+        \item Dolne ograniczenie jest oszacowaniem minimalnego możliwego kosztu kontynuowania trasy z danego węzła,
+        \item Jeżeli dolne ograniczenie jest wyższe niż koszt najlepszego znalezionego dotąd rozwiązania, gałąź jest odrzucana.
+    \end{itemize}
+    \item \textbf{Pruning}
+    \begin{itemize}
+        Jeśli dolne ograniczenie dla danego węzła jest większe niż koszt obecnego najlepszego rozwiązania, algorytm nie przeszukuje dalej tej gałęzi,
+    \end{itemize}
+\end{itemize}
+Algorytm kontynuuje rozgałęzianie i ograniczanie, aż wszystkie gałęzie zostaną albo rozwinięte, albo przycięte.
+
+\section{Kod}
+\subsection{Stałe}
+\begin{lstlisting}
+MAXSIZE = float("inf")
+N = 12
+DEPTH = 2
+AGGLOMERATION_RADIUS = 10
+NOISE_LEVEL = 100
+GENERATE_INSIDE = True
+\end{lstlisting}
+
+\subsection{Generowanie miast}
+\begin{lstlisting}
+def generate_cities(
+        n: int, 
+        radius: float = 10, 
+        noise_level: float = 42, 
+        generate_inside: bool = False
+    ) -> list[tuple[float, float]]:
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    angles += np.random.uniform(-noise_level, noise_level, size=n)
+    
+    if generate_inside:
+        radii = np.random.uniform(0, radius, size=n)
+    else:
+        radii = np.full(n, radius)
+
+    return [(radii[i] * np.cos(angles[i]), 
+    radii[i] * np.sin(angles[i])) for i in range(n)]
+\end{lstlisting}
+
+\subsection{Generowanie macierzy odległości}
+\begin{lstlisting}
+def distance_matrix(cities: list[tuple[float, float]]):
+    N = len(cities)
+    dist_mat: np.ndarray = np.zeros((N, N))
+
+    for i in range(N):
+        for j in range(N):
+            dist_mat[i][j] = math.sqrt(
+                (cities[i][0] - cities[j][0])**2 + 
+                (cities[i][1] - cities[j][1])**2
+                )
+
+    return dist_mat
+\end{lstlisting}
+
+\subsection{Kopiowanie ścieżek}
+\begin{lstlisting}
+def copy_to_final(curr_path, final_path, N):
+    final_path[:N + 1] = curr_path[:]
+    final_path[N] = curr_path[0]
+\end{lstlisting}
+
+\subsection{Pierwsze minimum}
+\begin{lstlisting}
+def first_min(adj: list[tuple[float, float]], i: int) -> float:
+    min = MAXSIZE
+    for j in range(len(adj)):
+        if adj[i][j] < min and i != j:
+            min = adj[i][j]
+    return min
+\end{lstlisting}
+
+\subsection{Drugie minimum}
+\begin{lstlisting}
+def second_min(adj: list[tuple[float, float]], i: int) -> float:
+    first = second = MAXSIZE
+    for j in range(len(adj)):
+        if i == j:
+            continue
+        if adj[i][j] <= first:
+            second = first
+            first = adj[i][j]
+        elif adj[i][j] <= second and adj[i][j] != first:
+            second = adj[i][j]
+    return second
+\end{lstlisting}
+
+\subsection{Rekursywne TSP}
+\begin{lstlisting}
+def tsp_recursive(
+        adj, 
+        curr_bound, 
+        curr_weight, 
+        level, 
+        curr_path, 
+        visited, 
+        final_path, 
+        N, 
+        final_res
+        ):
+    if level == N:
+        if adj[curr_path[level - 1]][curr_path[0]] != 0:
+            curr_res = curr_weight + adj[curr_path[level - 1]][curr_path[0]]
+            if curr_res < final_res[0]:
+                copy_to_final(curr_path, final_path, N)
+                final_res[0] = curr_res
+        return
+    
+    for i in range(N):
+        if adj[curr_path[level-1]][i] != 0 and not visited[i]:
+            curr_weight += adj[curr_path[level - 1]][i]
+            if level == 1:
+                curr_bound -= ((first_min(adj, curr_path[level - 1]) +
+                                first_min(adj, i)) / 2)
+            else:
+                curr_bound -= ((second_min(adj, curr_path[level - 1]) +
+                                first_min(adj, i)) / 2)
+                
+            if curr_bound + curr_weight < final_res[0]:
+                visited[i] = True
+                curr_path[level] = i
+                tsp_recursive(
+                    adj, 
+                    curr_bound, 
+                    curr_weight, 
+                    level + 1, 
+                    curr_path, 
+                    visited, 
+                    final_path, 
+                    N, 
+                    final_res
+                )
+                visited[i] = False
+
+            curr_weight -= adj[curr_path[level - 1]][i]
+            curr_bound += ((second_min(adj, curr_path[level - 1]) +
+                            first_min(adj, i)) / 2)
+\end{lstlisting}
+
+\subsection{Głowna metoda wywołująca branch and bound}
+\begin{lstlisting}
+def branch_and_bound_tsp(dist_mat, N):
+    final_res = [MAXSIZE]
+    curr_bound = 0
+    curr_path = [-1] * (N + 1)
+    visited = [False] * N
+
+    for i in range(N):
+        curr_bound += (first_min(dist_mat, i) + second_min(dist_mat, i))
+    curr_bound = math.ceil(curr_bound / 2)
+
+    curr_path[0] = 0
+    visited[0] = True
+
+    final_path = [-1] * (N + 1)
+    tsp_recursive(
+        dist_mat, 
+        curr_bound, 
+        0, 
+        1, 
+        curr_path, 
+        visited, 
+        final_path, 
+        N, 
+        final_res
+    )
+
+    return final_res[0], final_path
+\end{lstlisting}
+
+\section{Implementacja równoległa}
+\begin{lstlisting}
+def branch_and_bound_tsp_parallel(
+        cities: list[tuple[float, float]], 
+        N: int, 
+        depth: int
+        ):
+    dist_mat = distance_matrix(cities)
+    initial_paths = [[0, i] for i in range(1, min(N, depth+1))]
+
+    def process_path(path: list[int]) -> tuple[float, list[int]]:
+        visited = [False] * N
+        visited[0] = True
+        curr_bound = 0
+        curr_path = [-1] * (N + 1)
+        curr_path[0] = path[0]
+        for i in range(N):
+            curr_bound += (first_min(dist_mat, i) + second_min(dist_mat, i))
+        curr_bound = math.ceil(curr_bound / 2)
+
+        final_res = [MAXSIZE]
+        final_path = [-1] * (N + 1)
+        tsp_recursive(
+            dist_mat, 
+            curr_bound, 
+            0, 
+            1, 
+            curr_path, 
+            visited, 
+            final_path, 
+            N, 
+            final_res
+        )
+        return final_res[0], final_path
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    if rank == 0:
+        initial_paths = comm.bcast(initial_paths, root=0)
+
+        results = []
+        for i, path in enumerate(initial_paths):
+            result = process_path(path)
+            results.append(result)
+
+        final_res = [MAXSIZE]
+        final_path = [-1] * (N + 1)
+        for res in results:
+            if res[0] < final_res[0]:
+                final_res[0] = res[0]
+                final_path = res[1]
+
+        return final_res[0], final_path
+
+    return None, None
+\end{lstlisting}
+
+\section{Eksperymenty}
+W ramach eksperymentów rozważymy problemu rozmiaru $N = 10$ i $N = 15$. Sprawdzona będzie również generacja na i wewnątrz okręgu. Parametry odpowiedzialne za losowość rozłożenia miast (szum) będą stałe dla wszystkich eksperymentów.
+
+\subsection{Implementacja sekwencyjna}
+
+\subsubsection{Rozmiar N = 10}
+
+\paragraph{Miasta na okregu}:
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_10_10_cities.png}
+    \caption{Rozkład miast}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_10_10_heat.png}
+    \caption{Heatmapa odległości między miastami}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_10_10_route.png}
+    \caption{Optymalna ścieżka}
+    \label{fig:enter-label}
+\end{figure}
+Algorytm wybrał ścieżkę:
+\[
+0 \rightarrow 3 \rightarrow 4 \rightarrow 8 \rightarrow 9 \rightarrow 6 \rightarrow 1 \rightarrow 5 \rightarrow 2 \rightarrow 7 \rightarrow 0
+\]
+jej całkowity koszt to \textbf{58.8202475232184}. Algorytm wykonał się w \textbf{0.07} sekundy.
+
+\paragraph{Miasta wewnątrz okręgu} :
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_10_10_cities_inner.png}
+    \caption{Rozkład miast wewnątrz okręgu}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_10_10_heat_inner.png}
+    \caption{Heatmapa odległości miast.}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_10_10_route_inner.png}
+    \caption{Optymalna ścieżka}
+    \label{fig:enter-label}
+\end{figure}
+Algorytm wybrał ścieżkę:
+\[
+0 \rightarrow 2 \rightarrow 8 \rightarrow 3 \rightarrow 7 \rightarrow 6 \rightarrow 1 \rightarrow 9 \rightarrow 5 \rightarrow 4 \rightarrow 0
+\]
+jej całkowity koszt to \textbf{45.94564798204372}. Algorytm wykonał się w \textbf{0.28} sekundy.
+
+\subsubsection{Rozmiar N = 15}
+\paragraph{Miasta na okręgu}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_15_15_cities.png}
+    \caption{Rozkład miast na okręgu}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{set_15_15_route.png}
+    \caption{Optymalna ścieżka}
+    \label{fig:enter-label}
+\end{figure}
+Algorytm wybrał ścieżkę:
+\[
+0 \rightarrow 3 \rightarrow 13 \rightarrow 10 \rightarrow 2 \rightarrow 4 \rightarrow 5 \rightarrow 1 \rightarrow 14 \rightarrow 7 \rightarrow 9 \rightarrow 8 \rightarrow 6 \rightarrow 12 \rightarrow 11 \rightarrow 0
+\]
+jej całkowity koszt to \textbf{45.94564798204372}. Algorytm wykonał się w \textbf{9.43} sekundy.
+
+\paragraph{Miasta wewnątrz okręgu}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{seq_15_15_route_inner.png}
+    \caption{Rozkład miast wewnątrz okręgu}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{set_15_15_route_inner.png}
+    \caption{Optymalna ścieżk}
+    \label{fig:enter-label}
+\end{figure}
+Algorytm wybrał ścieżkę:
+\[
+0 \rightarrow 2 \rightarrow 13 \rightarrow 10 \rightarrow 9 \rightarrow 12 \rightarrow 8 \rightarrow 3 \rightarrow 11 \rightarrow 1 \rightarrow 6 \rightarrow 14 \rightarrow 4 \rightarrow 7 \rightarrow 5 \rightarrow 0
+\]
+jej całkowity koszt to \textbf{56.89942607195136}. Algorytm wykonał się w \textbf{94.98} sekundy.
+
+\paragraph{Wnioski}:
+Widzimy, że rozmiar problemu i rozłożenie miast mają bardzo dużyw wpływ na szybkość wykonania algorytmu.
+
+\subsection{Implementacja równoległa}
+Eksperymenty dla wersji równoległej przeprowadzimy dla problemu o rozmiarze $N=15$ oraz dla miast wygenerowanych \textbf{wewnątrz} okręgu przy zmiennym parametrze \textbf{d} i liczbie procesów.
+
+\paragraph{d = 2, 2 procesy}
+Execution time: 321.55s \\
+Minimum cost: 61.06028603428557 \\
+Path taken: [0, 4, 1, 7, 3, 10, 6, 11, 14, 9, 8, 13, 5, 12, 2, 0] \\
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{par22.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\paragraph{d = 3, 2 procesy}
+Execution time: 20.03s \\
+Minimum cost: 48.60273717808537 \\
+Path taken: [0, 9, 6, 8, 3, 7, 10, 14, 1, 4, 2, 11, 13, 5, 12, 0] \\
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{par32.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\paragraph{d = 4, 2 procesy}
+Execution time: 41.67
+Minimum cost: 52.608882472531604
+Path taken: [0, 1, 10, 5, 6, 12, 9, 2, 8, 11, 4, 7, 14, 13, 3, 0]
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{par42.png}
+    \caption{Enter Caption}
+    \label{fig:enter-label}
+\end{figure}
+
+\paragraph{d = 2, 4 procesy}
+Execution time: 166.67
+Minimum cost: 57.183862845001066
+Path taken: [0, 3, 5, 7, 10, 4, 13, 9, 14, 6, 11, 1, 8, 12, 2, 0]
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{par24.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\paragraph{d = 3, 4 procesy}
+Execution time: 42.71
+Minimum cost: 44.04535449414117
+Path taken: [0, 3, 9, 4, 5, 2, 7, 10, 6, 13, 8, 1, 14, 11, 12, 0]
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{par34.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\paragraph{d = 4, 4 procesy}
+Execution time: 89.96
+Minimum cost: 60.22844999730788
+Path taken: [0, 1, 13, 7, 5, 2, 3, 4, 12, 9, 14, 10, 6, 8, 11, 0]
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{par_44.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\subsection{Przyspieszenie, efektywność, metryka Karpa-Flatta}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{speedup.png}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{effectivness.png}
+    \label{fig:enter-label}
+\end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{karp-flatt.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\end{document}
