@@ -1,0 +1,328 @@
+\documentclass{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage[polish]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[table]{xcolor}
+\usepackage{diagbox}
+\usepackage{geometry}
+
+\title{Algorytmy Równoległe - Laboratorium 7}
+\author{Adam Staniszewski}
+
+\lstset{
+    language=python,
+    basicstyle=\ttfamily,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{orange},
+    backgroundcolor=\color{lightgray!20},
+    frame=single,
+    captionpos=b
+}
+
+\begin{document}
+
+\setlength{\parindent}{0pt}
+
+\maketitle
+
+\section{Implementacja sekwencyjna}
+Dla porównania z innymi metodami, przygotowałem implementację sekwencyjną.
+
+\vspace{1em}
+\textbf{Stałe}
+\begin{lstlisting}
+G = 6.67430e-11  
+EPS = 1e-10  
+MASS_SCALAR = 1e30 
+\end{lstlisting}
+
+\vspace{1em}
+\textbf{Obliczanie przyspieszenia}
+
+\begin{lstlisting}
+def compute_forces(stars: list[dict]) -> list[dict]:
+    for star in stars:
+        star['force'] = np.zeros(3)  
+        star['acceleration'] = np.zeros(3)  
+
+    for i, star_i in enumerate(stars):
+        for j, star_j in enumerate(stars):
+            if i != j: 
+                r_vec = star_j['position'] - star_i['position']
+                r_mag = np.linalg.norm(r_vec)
+                
+                force = G * star_i['mass'] * star_j['mass'] 
+                * r_vec / (r_mag**3 + EPS)
+                star_i['force'] += force
+
+        star_i['acceleration'] = star_i['force'] / star_i['mass']
+
+    return stars
+\end{lstlisting}
+
+\vspace{2em}
+\textbf{Wyniki}
+
+Dla pięciu gwiazd o danej masie i położeniu:
+\begin{lstlisting}
+stars = [
+    {'position': np.array([1.0, 0.0]), 'mass': MASS_SCALAR},
+    {'position': np.array([1.0, 2.0]), 'mass': MASS_SCALAR},
+    {'position': np.array([2.0, 4.0]), 'mass': MASS_SCALAR},
+    {'position': np.array([3.0, 6.0]), 'mass': MASS_SCALAR},
+    {'position': np.array([4.0, 8.0]), 'mass': MASS_SCALAR},
+]
+\end{lstlisting}
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{|l|r|r|r|}
+    \hline
+    \rowcolor{orange!40} 
+    Gwiazda & Przyspieszenie X & Przyspieszenie Y  \\\hline
+    1 & 1.80088671e+18 & 2.29336100e+19 \\\hline
+    2 & 8.12539152e+18 & -4.34966964e+17 \\\hline
+    3 & 5.40209720e+17 & -8.23998822e+17 \\\hline
+    4 & -2.02006859e+18 & -4.56778693e+18 \\\hline
+    5 & -8.44641935e+18 & -1.71068573e+19 \\\hline
+    \end{tabular}
+    \caption{\label{tab:widgets}Przyspieszenia gwiazd dla implementacji sekwencyjnej.}
+\end{table}
+
+W celu wyliczenia efektywności, przyspieszenia i metryki Karpa-Flatta przeprowadziłem również eksperyment z użyciem \textbf{4000 gwiazd}, które został wygenerowane przez następujący kod:
+
+\begin{lstlisting}
+def generate_stars(num_stars):
+    stars = []
+    for _ in range(num_stars):
+        position = np.random.rand(2) * 10  
+        mass = MASS_SCALAR 
+        stars.append({'position': position, 'mass': mass})
+    return stars
+\end{lstlisting}
+
+Algorytm sekwencyjny wykonał wszystkie obliczenia w \textbf{96.46} sekundy.
+
+\section{Zadanie 1}
+\begin{lstlisting}
+def task_1(stars, rank, size):
+    N = len(stars)
+    stars_per_process = N // size
+    local_stars = stars[rank * stars_per_process: (rank + 1) 
+    * stars_per_process]
+
+    transfer_buffer = np.copy(local_stars)
+    local_acc = np.zeros_like(local_stars)
+
+    comm = MPI.COMM_WORLD
+
+    for _ in range(size - 1):
+        left_rank = (rank - 1) % size
+        right_rank = (rank + 1) % size
+
+        comm.send(transfer_buffer, dest=left_rank)
+        transfer_buffer = comm.recv(source=right_rank)
+
+        for i, star_i in enumerate(local_stars):
+            m_i = star_i['mass']
+            r_i = star_i['position']
+
+            for star_j  in transfer_buffer:
+                r_j = star_j['position']
+                m_j = star_j['mass']
+
+                r_vec = r_j - r_i
+                r_mag = np.linalg.norm(r_vec)
+                force = G * m_i * m_j * r_vec / (r_mag**3 + EPS)
+                local_acc[i] += force / m_i
+
+    return local_acc
+
+\end{lstlisting}
+
+Dla tego samego zestawu gwiazd, co w poprzednim zadaniu, otrzymałem zbliżone wyniki.
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{|l|r|}
+    \hline
+    \rowcolor{orange!40} 
+    Ilość rdzeni & Czas wykonania (s)   \\\hline
+    Implementacja sekwencyjna & 96.46  \\\hline
+    2 & 32.31  \\\hline
+    4 & 31.43  \\\hline
+    8 & 35.18  \\\hline
+    \end{tabular}
+    \caption{\label{tab:widgets}Czas wykonania algorytmu dla 4000 gwiazd przy różnej liczbie rdzeni.}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{sp1.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{ep1.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{kfp1.png}
+\end{figure}
+
+\section{Zadanie 2}
+
+\begin{lstlisting}
+def task_2(stars, rank, size):
+    N = len(stars)
+    stars_per_process = N // size
+    local_stars = stars[rank * stars_per_process: (rank + 1) 
+    * stars_per_process]
+
+    transfer_buffer = np.copy(local_stars)
+    local_acc = np.zeros_like(local_stars)
+
+    comm = MPI.COMM_WORLD
+
+    for _ in range(size // 2):
+        left_rank = (rank - 1) % size
+        right_rank = (rank + 1) % size
+
+        comm.send(transfer_buffer, dest=left_rank)
+        transfer_buffer = comm.recv(source=right_rank)
+        
+        for i, star_i in enumerate(local_stars):
+            m_i = star_i['mass']
+            r_i = star_i['position']
+
+            for star_j  in transfer_buffer:
+                r_j = star_j['position']
+                m_j = star_j['mass']
+
+                r_vec = r_j - r_i
+                r_mag = np.linalg.norm(r_vec)
+                force = G * m_i * m_j * r_vec / (r_mag**3 + EPS)
+                local_acc[i] += force / m_i
+
+        transfer_buffer = local_stars.copy()
+
+    return local_acc
+\end{lstlisting}
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{|l|r|}
+    \hline
+    \rowcolor{orange!40} 
+    Ilość rdzeni & Czas wykonania (s)   \\\hline
+    Implementacja sekwencyjna & 96.46  \\\hline
+    2 & 40.85 \\\hline
+    4 & 20.69  \\\hline
+    8 & 19.27  \\\hline
+    \end{tabular}
+    \caption{\label{tab:widgets}Czas wykonania algorytmu dla 4000 gwiazd przy różnej liczbie rdzeni.}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{sp2.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{ep2.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{kpf2.png}
+\end{figure}
+
+\section{Zadanie 3}
+
+W tym zadaniu wykonujemy znacznie więcej obliczeń, ponieważ korzystamy zarówno z algorytmu z \textbf{zadania 2}, jak i dokonujemy obliczń przy użyciu metody Eulera.  W związku z tym zmniejszyłem liczbę gwiazd do \textbf{1000}.
+
+\vspace{1em}
+Korzystając z metody Eulera, aktualizujemy położenie:
+
+\[
+\mathbf{r}(t + \Delta t) = \mathbf{r}(t) + \mathbf{v}(t) \cdot \Delta t
+\]
+
+i prędkość:
+\[
+\mathbf{v}(t + \Delta t) = \mathbf{v}(t) + \mathbf{a}(t) \cdot \Delta t
+\]
+
+\begin{lstlisting}
+def task_3(stars, rank, size, time_steps, dt):
+    N = len(stars)
+    stars_per_process = N // size
+    local_stars = stars[rank * stars_per_process: (rank + 1) 
+    * stars_per_process]
+
+    for star in local_stars:
+        star['velocity'] = np.zeros(2)
+
+    comm = MPI.COMM_WORLD
+
+    for _ in range(time_steps):
+        local_acc = task_2(stars, rank, size)
+
+        for i, star in enumerate(local_stars):
+            # Pozycja
+            star['position'] += star['velocity'] * dt
+            # Prędkość
+            star['velocity'] += local_acc[i] * dt
+
+        all_stars = comm.allgather(local_stars)
+        stars = [star for sublist in all_stars for star in sublist]
+
+    return local_stars
+\end{lstlisting}
+
+\begin{table}[ht]
+    \centering
+    \begin{tabular}{|l|r|}
+    \hline
+    \rowcolor{orange!40} 
+    Ilość rdzeni & Czas wykonania (s)   \\\hline
+    Implementacja sekwencyjna & 779.56  \\\hline
+    2 & 244.64 \\\hline
+    4 & 183.43 \\\hline
+    8 & 157.95 \\\hline
+    \end{tabular}
+    \caption{\label{tab:widgets}Czas wykonania algorytmu dla 1000 gwiazd przy różnej liczbie rdzeni.}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{wyniki.png}
+    \caption{Wyniki dla kilku przykładowych gwiazd}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{sp3.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.6\linewidth]{ep3.png}
+    \label{fig:enter-label}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\linewidth]{kfp3.png}
+\end{figure}
+
+\end{document}

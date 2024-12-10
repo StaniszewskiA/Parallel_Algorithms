@@ -1,17 +1,20 @@
 from mpi4py import MPI
 import numpy as np
+import pandas as pd
+import time
 
 G = 6.67430e-11  
 EPS = 1e-10
 MASS_SCALAR = 1e30
+STARS = 1000
 
-stars = [
-    {'position': np.array([0.0, 0.0, 0.0]), 'mass': MASS_SCALAR},
-    {'position': np.array([1.0, 2.0, 3.0]), 'mass': MASS_SCALAR},
-    {'position': np.array([2.0, 4.0, 6.0]), 'mass': MASS_SCALAR},
-    {'position': np.array([3.0, 6.0, 9.0]), 'mass': MASS_SCALAR},
-    {'position': np.array([4.0, 8.0, 12.0]), 'mass': MASS_SCALAR}
-]
+def generate_stars(num_stars):
+    stars = []
+    for _ in range(num_stars):
+        position = np.random.rand(2) * 10  
+        mass = MASS_SCALAR 
+        stars.append({'position': position, 'mass': mass})
+    return stars
 
 def task_1(stars, rank, size):
     N = len(stars)
@@ -85,30 +88,29 @@ def task_3(stars, rank, size, time_steps, dt):
     local_stars = stars[rank * stars_per_process: (rank + 1) * stars_per_process]
 
     for star in local_stars:
-        star['velocity'] = np.zeros(3)
+        star['velocity'] = np.zeros(2)
 
     comm = MPI.COMM_WORLD
 
-    for step in range(time_steps):
+    for _ in range(time_steps):
         local_acc = task_2(stars, rank, size)
 
-        # Aktualizacja pozycji
-        for i, star in enumerate(local_stars): 
-            star['position'] += star['velocity'] * dt + 0.5 * local_acc[i] * dt**2
-
-        new_local_acc = task_2(stars, rank, size)
-
-        # Aktualizacja prędkości
         for i, star in enumerate(local_stars):
-            star['velocity'] += 0.5 * (local_acc[i] + new_local_acc[i]) * dt
+            # Pozycja
+            star['position'] += star['velocity'] * dt
+            # Prędkość
+            star['velocity'] += local_acc[i] * dt
 
-        # Synchronizacja
         all_stars = comm.allgather(local_stars)
         stars = [star for sublist in all_stars for star in sublist]
 
     return local_stars
 
 def main():
+    pd.set_option('display.float_format', lambda x: f'{x:.2e}') 
+
+    stars = generate_stars(STARS)
+
     task = 3
 
     comm = MPI.COMM_WORLD
@@ -116,36 +118,52 @@ def main():
     size = comm.Get_size()
 
     if task == 1:
+        start = time.time()
         accs_task_1 = task_1(stars, rank, size)
-        accs_task_2 = task_2(stars, rank, size)
-
         all_accs_task_1 = comm.gather(accs_task_1, root=0)
-        all_accs_task_2 = comm.gather(accs_task_2, root=0)
 
         if rank == 0:
             final_accs_task_1 = np.concatenate(all_accs_task_1, axis=0)
+            end = time.time()
+
+            print(f"Elapsed time {end - start}")
+
+            df_1 = pd.DataFrame(final_accs_task_1)
+            df_1.to_csv("acc_par_1.csv", index=False)
+
+    if task == 2:
+        start = time.time()
+        accs_task_2 = task_2(stars, rank, size)
+        all_accs_task_2 = comm.gather(accs_task_2, root=0)
+
+        if rank == 0:
             final_accs_task_2 = np.concatenate(all_accs_task_2, axis=0)
+            end = time.time()
 
-            print("Przyspieszenia (Task 1):")
-            for i, acc in enumerate(final_accs_task_1):
-                print(f"Gwiazda {i}: przyspieszenie = {acc}")
+            print(f"Elapsed time {end - start}")
 
-            print("\nPrzyspieszenia (Task 2):")
-            for i, acc in enumerate(final_accs_task_2):
-                print(f"Gwiazda {i}: przyspieszenie = {acc}")
-    else:
+            df_2 = pd.DataFrame(final_accs_task_2)
+            df_2.to_csv("acc_par_2.csv", index=False)
+
+    if task == 3:
         time_steps = 100
         dt = 1e5
 
+        start = time.time()
         trajectories = task_3(stars, rank, size, time_steps, dt)
         all_trajectories = comm.gather(trajectories, root=0)
 
+        end = time.time()
+
         if rank == 0:
             final_trajectories = [star for sublist in all_trajectories for star in sublist]
+ 
+            print(f"Elapsed time {end - start}")
 
-            print("\nTrajektorie (Task 3):")
-            for i, star in enumerate(final_trajectories):
-                print(f"Gwiazda {i}: pozycja = {star['position']}, prędkość = {star['velocity']}")
+            print(final_trajectories)
+
+            df_3 = pd.DataFrame(final_trajectories)
+            df_3.to_csv("traj_par.csv", index=False)
 
 if __name__ == "__main__":
     main()
